@@ -7,15 +7,12 @@ app = Flask(__name__)
 engine = SimulatorEngine()
 engine.event("info", "Simulator ready")
 
-
 def body():
     return request.get_json(silent=True) or {}
-
 
 @app.get("/")
 def index():
     return render_template("dashboard.html")
-
 
 @app.get("/api/state")
 def state():
