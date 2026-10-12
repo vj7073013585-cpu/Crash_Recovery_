@@ -40,7 +40,6 @@ def read():
 def commit():
     return jsonify(engine.commit(int(body()["txn"])))
 
-
 @app.post("/api/abort")
 def abort():
     return jsonify(engine.abort(int(body()["txn"])))
