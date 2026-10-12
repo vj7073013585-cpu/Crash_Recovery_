@@ -1,0 +1,93 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Crash Simulator</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#0b0f17;--card:#131a26;--line:#222d3f;--tx:#e6edf7;--mu:#8795ad;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--blue:#3b82f6;--vio:#a78bfa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,sans-serif;padding:18px}
+h1{font-size:20px;margin:0}h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mu);margin:0 0 10px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px;overflow:auto}
+.stat .v{font-size:24px;font-weight:700}.stat .l{color:var(--mu);font-size:12px}
+table{width:100%;border-collapse:collapse}th{color:var(--mu);font-weight:500;text-align:left;font-size:12px}
+td,th{padding:5px 6px;border-bottom:1px solid var(--line)}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.b{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600;border:1px solid}
+.g{color:var(--ok);border-color:#14532d;background:#0f2a1a}.y{color:var(--warn);border-color:#78350f;background:#2a1f0a}
+.r{color:var(--bad);border-color:#7f1d1d;background:#2a1010}.bl{color:var(--blue);border-color:#1e3a8a;background:#0e1a35}
+.v2{color:var(--vio);border-color:#4c1d95;background:#1a1235}.gr{color:var(--mu);border-color:var(--line)}
+.seg{display:flex;gap:3px;height:12px;margin:6px 0}.seg i{flex:1;border-radius:3px;background:#1d2736}
+.seg i.d{background:var(--warn)}.seg i.c{background:var(--blue)}.bar{height:8px;border-radius:4px;background:#1d2736;overflow:hidden}.bar i{display:block;height:100%}
+button,select,input{background:#1a2333;color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit}
+button{cursor:pointer}button:hover{border-color:var(--blue)}button.red{background:#3a1414;border-color:#7f1d1d}button.grn{background:#12301f;border-color:#14532d}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center}input{width:70px}
+.ev{font:12px ui-monospace,monospace;max-height:170px;overflow:auto}.ev div{padding:2px 0}.mu{color:var(--mu)}
+</style></head><body>
+<div class="top"><div><h1>Crash Simulator <span class="mu" style="font-weight:400">· WAL · ARIES recovery</span></h1></div><div id="status"></div></div>
+<div class="stats" id="stats"></div>
+<div class="grid"><div>
+ <div class="card"><h2>Transactions</h2>
+  <div class="row"><button class="grn" onclick="p('begin')">Begin</button>
+   T<input id="t" value="1"> page <select id="pg"></select> value <input id="v" value="42">
+   <button onclick="p('write',{txn:t.value,page:pg.value,value:v.value})">Write</button>
+   <button onclick="p('read',{txn:t.value,page:pg.value})">Read</button>
+   <button class="grn" onclick="p('commit',{txn:t.value})">Commit</button>
+   <button onclick="p('abort',{txn:t.value})">Abort</button>
+   <button onclick="p('checkpoint')">Checkpoint</button><button onclick="p('flush')">Flush pages</button></div>
+  <div id="txns"></div></div>
+ <div class="card"><h2>Failure injection</h2>
+  <div class="row"><select id="cp"></select><button onclick="p('arm',{point:cp.value})">Arm crash point</button>
+   <button class="red" onclick="p('crash')">Crash now</button><button class="grn" onclick="p('recover')">Recover</button>
+   <button onclick="p('reset')">Reset</button></div>
+  <div class="row"><span class="mu">Scenarios:</span>
+   <button onclick="sc('redo')">REDO</button><button onclick="sc('undo')">UNDO + REDO</button>
+   <button onclick="sc('undo_crash')">Crash in recovery</button><button onclick="sc('checkpoint')">Checkpoint</button>
+   <button onclick="sc('deadlock')">Deadlock</button><button onclick="sc('prevention')">Auto-prevention</button></div>
+  <div id="armed" class="mu"></div><div id="msg" class="mu"></div></div>
+ <div class="card"><h2>Pages &amp; buffer pool</h2><div id="buf"></div><div id="pages"></div></div>
+</div><div>
+ <div class="card"><h2>Risk monitor <label class="mu" style="float:right;text-transform:none"><input type="checkbox" id="auto" checked style="width:auto" onchange="p('auto',{on:this.checked})"> auto-prevention</label></h2><div id="risks"></div></div>
+ <div class="card"><h2>Write-ahead log</h2><div id="wal"></div></div>
+ <div class="card"><h2>Last recovery</h2><div id="rec" class="mu">No recovery yet.</div></div>
+ <div class="card"><h2>Events</h2><div class="ev" id="ev"></div></div>
+</div></div>
+<script>
+const $=id=>document.getElementById(id);let init=false;
+async function p(path,b){const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+ const j=await r.json();if(j.error)$('msg').textContent='⚠ '+j.error;else $('msg').textContent='';refresh();return j}
+async function sc(n){const j=await p('scenario/'+n);$('msg').textContent=j.message||''}
+const badge=(s,c)=>`<span class="b ${c}">${s}</span>`;
+const SC={ACTIVE:'bl',WAITING:'y',COMMITTED:'g',ABORTED:'gr',ROLLED_BACK:'gr',CRASHED:'r',RUNNING:'g',RECOVERING:'y'};
+const WC={BEGIN:'gr',UPDATE:'bl',CLR:'v2',COMMIT:'g',ABORT:'y',CHECKPOINT:'y'};
+function tbl(h,rows){return `<table><tr>${h.map(x=>`<th class="${x[0]=='#'?'n':''}">${x.replace('#','')}</th>`).join('')}</tr>${rows.join('')}</table>`}
+function render(s){
+ if(!init){pg.innerHTML=s.pages.map(x=>`<option>${x.id}</option>`).join('');
+  cp.innerHTML=Object.entries(s.crash_points).map(([k,v])=>`<option value="${k}" title="${v}">${k}</option>`).join('');init=true}
+ $('status').innerHTML=badge(s.status,SC[s.status])+(s.throttled?' '+badge('THROTTLED','y'):'');
+ const m=s.metrics;
+ $('stats').innerHTML=[['Active txns',m.active_txns],['WAL records',m.wal_records],['Unflushed (RAM)',m.wal_unflushed],
+  ['Since checkpoint',m.wal_since_checkpoint],['Checkpoint LSN',s.checkpoint_lsn],['Disk writes',s.buffer.disk_writes]]
+  .map(([l,v])=>`<div class="card stat" style="margin:0"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+ $('armed').innerHTML=s.armed?'Armed: '+badge(s.armed,'y')+' <span class="mu">'+s.crash_points[s.armed]+'</span>':'';
+ $('txns').innerHTML=tbl(['Txn','State','Locks','Waits for','#Log recs','#WAL %'],s.txns.map(t=>
+  `<tr><td>T${t.id}</td><td>${badge(t.state,SC[t.state]||'gr')}${t.note?` <span class="mu">${t.note}</span>`:''}</td><td>${t.locks.join(' ')||'–'}</td>
+  <td>${t.waiting_for.map(x=>'T'+x).join(' ')||'–'}</td><td class="n">${t.log_records}</td><td class="n">${t.log_share}%</td></tr>`))||'';
+ const b=s.buffer;let seg='';const fr=s.pages.filter(x=>x.ram!==null);
+ for(let i=0;i<b.capacity;i++){const f=fr[i];seg+=`<i class="${f?(f.dirty?'d':'c'):''}"></i>`}
+ $('buf').innerHTML=`<div class="mu">${b.frames}/${b.capacity} frames · ${badge(b.dirty+' dirty','y')} ${badge((b.frames-b.dirty)+' clean','bl')}</div><div class="seg">${seg}</div>`;
+ $('pages').innerHTML=tbl(['Page','#RAM','#Disk','#RAM LSN','#Disk LSN','State'],s.pages.map(x=>
+  `<tr><td>${x.id}</td><td class="n">${x.ram??'–'}</td><td class="n">${x.disk}</td><td class="n">${x.ram_lsn??'–'}</td><td class="n">${x.disk_lsn}</td>
+  <td>${x.ram===null?badge('disk only','gr'):x.dirty?badge('dirty','y'):badge('clean','bl')}${x.ram!==null&&x.ram!==x.disk?'':''}</td></tr>`));
+ $('risks').innerHTML=s.risks.map(r=>{const pc=Math.min(100,100*r.value/r.limit),c=r.level=='critical'?'var(--bad)':r.level=='warn'?'var(--warn)':'var(--ok)';
+  return `<div style="margin-bottom:9px"><div style="display:flex;justify-content:space-between"><span>${r.metric.replace(/_/g,' ')}</span><span>${r.value} / ${r.limit} ${badge(r.level,r.level=='critical'?'r':r.level=='warn'?'y':'g')}</span></div><div class="bar"><i style="width:${pc}%;background:${c}"></i></div></div>`}).join('');
+ $('wal').innerHTML=tbl(['LSN','Type','Txn','Page','Before → After','Disk'],s.wal.slice().reverse().slice(0,18).map(r=>
+  `<tr><td>${r.lsn}</td><td>${badge(r.type,WC[r.type]||'gr')}</td><td>${r.txn?'T'+r.txn:''}</td><td>${r.page||''}</td><td>${r.page?r.before+' → '+r.after:''}</td><td>${r.durable?badge('durable','g'):badge('RAM only','r')}</td></tr>`));
+ const L=s.last_recovery;
+ if(L){const a=L.analysis;$('rec').innerHTML=`<div class="row">${badge('Winners: '+(a.winners.map(x=>'T'+x).join(', ')||'none'),'g')} ${badge('Losers: '+(a.losers.map(x=>'T'+x).join(', ')||'none'),'r')} ${badge('from checkpoint LSN '+a.checkpoint_lsn,'gr')}</div>`+
+  tbl(['Phase','#Actions','Detail'],[`<tr><td>1 Analysis</td><td class="n">${Object.keys(a.dirty_pages).length}</td><td>dirty pages found; REDO starts at LSN ${a.redo_start??'–'}</td></tr>`,
+  `<tr><td>2 REDO</td><td class="n">${L.redo.length}</td><td>${L.redo.map(x=>x.page+'='+x.value).join(', ')||'nothing'} · ${L.redo_skipped} skipped</td></tr>`,
+  `<tr><td>3 UNDO</td><td class="n">${L.undo.length}</td><td>${L.undo.map(x=>x.page+'→'+x.restored).join(', ')||'nothing'}</td></tr>`])}
+ $('ev').innerHTML=s.events.slice().reverse().map(e=>`<div><span class="mu">${e.t}</span> <span style="color:var(--${e.level=='crit'?'bad':e.level=='warn'?'warn':e.level=='ok'?'ok':'mu'})">${e.msg}</span></div>`).join('');
+}
+async function refresh(){try{render(await (await fetch('/api/state')).json())}catch(e){}}
+refresh();setInterval(refresh,1500);
+</script></body></html>
